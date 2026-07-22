@@ -1756,7 +1756,7 @@ pub(crate) fn code_lens(
             let update_test = run.update_test;
             let title = run.title();
             let can_debug = match run.kind {
-                ide::RunnableKind::DocTest { .. } => false,
+                ide::RunnableKind::DocTest { .. } | ide::RunnableKind::ViewTest { .. } => false,
                 ide::RunnableKind::TestMod { .. }
                 | ide::RunnableKind::Test { .. }
                 | ide::RunnableKind::Bench { .. }

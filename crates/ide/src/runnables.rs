@@ -59,6 +59,7 @@ pub enum RunnableKind {
     Bench { test_id: TestId },
     DocTest { test_id: TestId },
     Bin,
+    ViewTest { type_name: String },
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -68,6 +69,7 @@ enum RunnableDiscKind {
     DocTest,
     Bench,
     Bin,
+    ViewTest,
 }
 
 impl RunnableKind {
@@ -78,6 +80,7 @@ impl RunnableKind {
             RunnableKind::DocTest { .. } => RunnableDiscKind::DocTest,
             RunnableKind::Bench { .. } => RunnableDiscKind::Bench,
             RunnableKind::Bin => RunnableDiscKind::Bin,
+            RunnableKind::ViewTest { .. } => RunnableDiscKind::ViewTest,
         }
     }
 }
@@ -92,6 +95,7 @@ impl Runnable {
             RunnableKind::Bin => {
                 format!("run {}", target.unwrap_or("binary"))
             }
+            RunnableKind::ViewTest { type_name } => format!("run ui-test {type_name}"),
         }
     }
 
@@ -109,6 +113,7 @@ impl Runnable {
             RunnableKind::DocTest { .. } => "Doctest",
             RunnableKind::Bench { .. } => "Bench",
             RunnableKind::Bin => return s,
+            RunnableKind::ViewTest { .. } => "UI Test",
         };
         s.push_str(suffix);
         s
@@ -155,7 +160,9 @@ pub(crate) fn runnables(db: &RootDatabase, file_id: FileId) -> Vec<Runnable> {
         let runnable = match def {
             Definition::Module(it) => runnable_mod(&sema, it),
             Definition::Function(it) => runnable_fn(&sema, it),
-            Definition::SelfType(impl_) => runnable_impl(&sema, &impl_),
+            Definition::SelfType(impl_) => {
+                runnable_impl(&sema, &impl_).or_else(|| runnable_view_test(&sema, &impl_))
+            }
             _ => None,
         };
         add_opt(runnable.or_else(|| module_def_doctest(&sema, def)), Some(def));
@@ -431,6 +438,29 @@ pub(crate) fn runnable_impl(
         kind: RunnableKind::DocTest { test_id },
         cfg,
         update_test,
+    })
+}
+
+// `impl ViewTest for X` is how a TestEngine UI test is declared. rust-analyzer
+// has no built in notion of it, so map it to a runnable that runs that one test
+// in windowed human mode, the same command a person would type by hand.
+fn runnable_view_test(sema: &Semantics<'_, RootDatabase>, def: &hir::Impl) -> Option<Runnable> {
+    let trait_ = def.trait_(sema.db)?;
+    if trait_.name(sema.db).as_str() != "ViewTest" {
+        return None;
+    }
+    let display_target = def.module(sema.db).krate(sema.db).to_display_target(sema.db);
+    let edition = display_target.edition;
+    let type_name =
+        def.self_ty(sema.db).as_adt()?.name(sema.db).display(sema.db, edition).to_string();
+    let nav = def.try_to_nav(sema)?.call_site();
+    let cfg = def.attrs(sema.db).cfgs(sema.db).cloned();
+    Some(Runnable {
+        use_name_in_title: false,
+        nav,
+        kind: RunnableKind::ViewTest { type_name },
+        cfg,
+        update_test: UpdateTest::default(),
     })
 }
 
@@ -767,6 +797,24 @@ mod tests {
         let tests = analysis.related_tests(position, None).unwrap();
         let navigation_targets = tests.into_iter().map(|runnable| runnable.nav).collect::<Vec<_>>();
         expect.assert_debug_eq(&navigation_targets);
+    }
+
+    #[test]
+    fn view_test_impl_is_runnable() {
+        check(
+            r#"
+//- /lib.rs
+$0
+pub trait ViewTest {}
+struct ScrollViewTest;
+impl ViewTest for ScrollViewTest {}
+"#,
+            expect![[r#"
+                [
+                    "(ViewTest, NavigationTarget { file_id: FileId(0), full_range: 46..81, focus_range: 64..78, name: \"impl\", kind: Impl })",
+                ]
+            "#]],
+        );
     }
 
     #[test]

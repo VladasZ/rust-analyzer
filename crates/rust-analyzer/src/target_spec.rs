@@ -117,6 +117,7 @@ impl ProjectJsonTargetSpec {
                     arg.replace("{label}", &this.label).replace("{test_id}", &test_id.to_string())
                 })
             }
+            RunnableKind::ViewTest { .. } => None,
         }
     }
 }
@@ -128,6 +129,16 @@ impl CargoTargetSpec {
         kind: &RunnableKind,
         cfg: &Option<CfgExpr>,
     ) -> (Vec<String>, Vec<String>) {
+        // A view test runs through a fixed `cargo run -p ui-test` invocation, not
+        // the crate's own cargo target, so skip all the feature and package
+        // machinery below and return the exact args the runner expects.
+        if let RunnableKind::ViewTest { type_name } = kind {
+            return (
+                vec!["run".to_owned(), "-p".to_owned(), "ui-test".to_owned()],
+                vec!["--test-name".to_owned(), type_name.clone(), "--human".to_owned()],
+            );
+        }
+
         let config = snap.config.runnables(None);
         let extra_test_binary_args = config.extra_test_binary_args;
 
@@ -160,6 +171,7 @@ impl CargoTargetSpec {
                 };
                 cargo_args.push(subcommand);
             }
+            RunnableKind::ViewTest { .. } => unreachable!("view test args returned early above"),
         }
 
         let (allowed_features, target_required_features) = if let Some(mut spec) = spec {
@@ -237,6 +249,7 @@ impl CargoTargetSpec {
                 }
                 _ => (None, None),
             },
+            RunnableKind::ViewTest { .. } => (None, None),
         };
         let test_name = test_name.unwrap_or_default();
 
@@ -322,6 +335,7 @@ impl CargoTargetSpec {
                 executable_args.extend(extra_test_binary_args);
             }
             RunnableKind::Bin => {}
+            RunnableKind::ViewTest { .. } => {}
         }
 
         executable_args
