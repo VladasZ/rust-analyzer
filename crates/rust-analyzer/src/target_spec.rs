@@ -5,7 +5,7 @@ use std::mem;
 use cargo_metadata::PackageId;
 use cfg::{CfgAtom, CfgExpr};
 use hir::sym;
-use ide::{Cancellable, Crate, FileId, RunnableKind, TestId};
+use ide::{Cancellable, Crate, FileId, RunnableKind, TestId, ViewTestMode};
 use project_model::project_json::{self, Runnable};
 use project_model::{CargoFeatures, ManifestPath, TargetKind};
 use rustc_hash::FxHashSet;
@@ -132,11 +132,17 @@ impl CargoTargetSpec {
         // A view test runs through a fixed `cargo run -p ui-test` invocation, not
         // the crate's own cargo target, so skip all the feature and package
         // machinery below and return the exact args the runner expects.
-        if let RunnableKind::ViewTest { type_name } = kind {
-            return (
-                vec!["run".to_owned(), "-p".to_owned(), "ui-test".to_owned()],
-                vec!["--test-name".to_owned(), type_name.clone(), "--human".to_owned()],
-            );
+        if let RunnableKind::ViewTest { type_name, mode } = kind {
+            let executable_args = match mode {
+                ViewTestMode::Human => {
+                    vec!["--test-name".to_owned(), type_name.clone(), "--human".to_owned()]
+                }
+                ViewTestMode::Headed => vec!["--test-name".to_owned(), type_name.clone()],
+                ViewTestMode::Headless => {
+                    vec!["--headless".to_owned(), "--test-name".to_owned(), type_name.clone()]
+                }
+            };
+            return (vec!["run".to_owned(), "-p".to_owned(), "ui-test".to_owned()], executable_args);
         }
 
         let config = snap.config.runnables(None);

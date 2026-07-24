@@ -113,7 +113,7 @@ pub use crate::{
     navigation_target::{NavigationTarget, TryToNav, UpmappingResult},
     references::{FindAllRefsConfig, ReferenceSearchResult},
     rename::{RenameConfig, RenameError},
-    runnables::{Runnable, RunnableKind, TestId, UpdateTest},
+    runnables::{Runnable, RunnableKind, TestId, UpdateTest, ViewTestMode},
     signature_help::SignatureHelp,
     static_index::{
         StaticIndex, StaticIndexedFile, TokenId, TokenStaticData, VendoredLibrariesConfig,

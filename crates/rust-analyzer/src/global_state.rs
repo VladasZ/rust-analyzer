@@ -188,6 +188,11 @@ pub(crate) struct GlobalState {
     /// been called.
     pub(crate) deferred_task_queue: DeferredTaskQueue,
 
+    /// Runnables requests that arrived before the workspace was loaded, held
+    /// back so clients that cache the first answer get a complete one. See
+    /// `GlobalState::on_request`.
+    pub(crate) deferred_runnable_requests: Vec<lsp_server::Request>,
+
     /// HACK: Workaround for <https://github.com/rust-lang/rust-analyzer/issues/19709>
     /// This is marked true if we failed to load a crate root file at crate graph creation,
     /// which will usually end up causing a bunch of incorrect diagnostics on startup.
@@ -320,6 +325,7 @@ impl GlobalState {
             prime_caches_queue: OpQueue::default(),
 
             deferred_task_queue,
+            deferred_runnable_requests: Vec::new(),
             incomplete_crate_graph: false,
 
             minicore: MiniCoreRustAnalyzerInternalOnly::default(),

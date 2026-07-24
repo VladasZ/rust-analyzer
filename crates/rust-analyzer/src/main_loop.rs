@@ -2,7 +2,7 @@
 //! requests/replies and notifications back to the client.
 
 use std::{
-    fmt,
+    fmt, mem,
     ops::Div as _,
     panic::AssertUnwindSafe,
     time::{Duration, Instant},
@@ -11,7 +11,7 @@ use std::{
 use crossbeam_channel::{Receiver, never, select};
 use ide_db::base_db::{SourceDatabase, VfsPath};
 use lsp_server::{Connection, Notification, Request};
-use lsp_types::{Notification as _, TextDocumentIdentifier};
+use lsp_types::{Notification as _, Request as _, TextDocumentIdentifier};
 use stdx::thread::ThreadIntent;
 use tracing::{Level, error, span};
 use vfs::{AbsPathBuf, FileId, loader::LoadingProgress};
@@ -628,6 +628,14 @@ impl GlobalState {
         }
 
         self.update_status_or_notify();
+
+        if self.is_quiescent() && !self.deferred_runnable_requests.is_empty() {
+            for req in mem::take(&mut self.deferred_runnable_requests) {
+                if !self.is_completed(&req) {
+                    self.on_request(req);
+                }
+            }
+        }
 
         let loop_duration = loop_start.elapsed();
         if loop_duration > Duration::from_millis(100) && was_quiescent {
@@ -1319,6 +1327,14 @@ impl GlobalState {
 
     /// Handles a request.
     fn on_request(&mut self, req: Request) {
+        // A client may fetch runnables right after opening a buffer, before the
+        // workspace is loaded, and cache the near-empty answer until the buffer
+        // changes. Zed does. Hold the request until the server is quiescent, so
+        // the answer the client caches is the real one.
+        if req.method == lsp_ext::RunnablesRequest::METHOD.as_str() && !self.is_quiescent() {
+            self.deferred_runnable_requests.push(req);
+            return;
+        }
         let mut dispatcher = RequestDispatcher { req: Some(req), global_state: self };
         dispatcher.on_sync_mut::<lsp_types::ShutdownRequest>(|s, ()| {
             s.shutdown_requested = true;

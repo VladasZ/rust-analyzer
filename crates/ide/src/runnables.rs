@@ -59,7 +59,14 @@ pub enum RunnableKind {
     Bench { test_id: TestId },
     DocTest { test_id: TestId },
     Bin,
-    ViewTest { type_name: String },
+    ViewTest { type_name: String, mode: ViewTestMode },
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum ViewTestMode {
+    Human,
+    Headed,
+    Headless,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -95,7 +102,11 @@ impl Runnable {
             RunnableKind::Bin => {
                 format!("run {}", target.unwrap_or("binary"))
             }
-            RunnableKind::ViewTest { type_name } => format!("run ui-test {type_name}"),
+            RunnableKind::ViewTest { type_name, mode } => match mode {
+                ViewTestMode::Human => format!("run ui-test {type_name}"),
+                ViewTestMode::Headed => format!("run ui-test {type_name} headed"),
+                ViewTestMode::Headless => format!("run ui-test {type_name} headless"),
+            },
         }
     }
 
@@ -161,7 +172,15 @@ pub(crate) fn runnables(db: &RootDatabase, file_id: FileId) -> Vec<Runnable> {
             Definition::Module(it) => runnable_mod(&sema, it),
             Definition::Function(it) => runnable_fn(&sema, it),
             Definition::SelfType(impl_) => {
-                runnable_impl(&sema, &impl_).or_else(|| runnable_view_test(&sema, &impl_))
+                let runnable = runnable_impl(&sema, &impl_);
+                if runnable.is_none()
+                    && let Some(view_tests) = runnable_view_tests(&sema, &impl_)
+                {
+                    for view_test in view_tests {
+                        add_opt(Some(view_test), Some(def));
+                    }
+                }
+                runnable
             }
             _ => None,
         };
@@ -442,9 +461,12 @@ pub(crate) fn runnable_impl(
 }
 
 // `impl ViewTest for X` is how a TestEngine UI test is declared. rust-analyzer
-// has no built in notion of it, so map it to a runnable that runs that one test
-// in windowed human mode, the same command a person would type by hand.
-fn runnable_view_test(sema: &Semantics<'_, RootDatabase>, def: &hir::Impl) -> Option<Runnable> {
+// has no built in notion of it, so map it to one runnable per run mode of the
+// `ui-test` runner: watchable human, plain windowed, and headless.
+fn runnable_view_tests(
+    sema: &Semantics<'_, RootDatabase>,
+    def: &hir::Impl,
+) -> Option<[Runnable; 3]> {
     let trait_ = def.trait_(sema.db)?;
     if trait_.name(sema.db).as_str() != "ViewTest" {
         return None;
@@ -455,13 +477,15 @@ fn runnable_view_test(sema: &Semantics<'_, RootDatabase>, def: &hir::Impl) -> Op
         def.self_ty(sema.db).as_adt()?.name(sema.db).display(sema.db, edition).to_string();
     let nav = def.try_to_nav(sema)?.call_site();
     let cfg = def.attrs(sema.db).cfgs(sema.db).cloned();
-    Some(Runnable {
-        use_name_in_title: false,
-        nav,
-        kind: RunnableKind::ViewTest { type_name },
-        cfg,
-        update_test: UpdateTest::default(),
-    })
+    Some([ViewTestMode::Human, ViewTestMode::Headed, ViewTestMode::Headless].map(|mode| {
+        Runnable {
+            use_name_in_title: false,
+            nav: nav.clone(),
+            kind: RunnableKind::ViewTest { type_name: type_name.clone(), mode },
+            cfg: cfg.clone(),
+            update_test: UpdateTest::default(),
+        }
+    }))
 }
 
 fn has_cfg_test(cfg: Option<&CfgExpr>) -> bool {
@@ -811,6 +835,8 @@ impl ViewTest for ScrollViewTest {}
 "#,
             expect![[r#"
                 [
+                    "(ViewTest, NavigationTarget { file_id: FileId(0), full_range: 46..81, focus_range: 64..78, name: \"impl\", kind: Impl })",
+                    "(ViewTest, NavigationTarget { file_id: FileId(0), full_range: 46..81, focus_range: 64..78, name: \"impl\", kind: Impl })",
                     "(ViewTest, NavigationTarget { file_id: FileId(0), full_range: 46..81, focus_range: 64..78, name: \"impl\", kind: Impl })",
                 ]
             "#]],
